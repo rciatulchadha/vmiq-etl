@@ -1,0 +1,82 @@
+# ════════════════════════════════════════════════════════════
+# vmiq-uploads-helper — File ingestion helper pod
+# Namespace: vmiq-ingestion
+#
+# A long-running pod that mounts the uploads PVC and stays
+# alive so you can oc cp RVTools xlsx files onto it.
+# Without this pod, there is nothing mounting the PVC to
+# copy files into.
+#
+# Usage after deploy:
+#   HELPER=$(oc get pod -n vmiq-ingestion -l app=uploads-helper \
+#     -o jsonpath='{.items[0].metadata.name}')
+#
+#   # Copy a single file
+#   oc cp myvcenter.xlsx vmiq-ingestion/${HELPER}:/uploads/ITEAST/myvcenter.xlsx
+#
+#   # Copy all xlsx files in current directory
+#   for f in *.xlsx; do
+#     oc cp "$f" vmiq-ingestion/${HELPER}:/uploads/ITEAST/"$f"
+#   done
+#
+#   # Copy CMDB CSV
+#   oc cp server_cmdb.csv vmiq-ingestion/${HELPER}:/cmdb/ITEAST/server_cmdb.csv
+#
+#   # List what's already there
+#   oc exec -n vmiq-ingestion ${HELPER} -- ls -la /uploads/ITEAST/
+# ════════════════════════════════════════════════════════════
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: uploads-helper
+  namespace: vmiq-ingestion
+  labels:
+    app: uploads-helper
+    app.kubernetes.io/part-of: evit
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: uploads-helper
+  template:
+    metadata:
+      labels:
+        app: uploads-helper
+    spec:
+      containers:
+        - name: helper
+          # Minimal Alpine image — just needs tar and shell for oc cp
+          image: alpine:3.19
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              # Create estate subdirectories if they don't exist
+              mkdir -p /uploads/ITEAST/archive
+              mkdir -p /cmdb/ITEAST
+              echo "Uploads helper ready — PVC mounted at /uploads and /cmdb"
+              # Stay alive
+              tail -f /dev/null
+          volumeMounts:
+            - name: uploads
+              mountPath: /uploads
+            - name: cmdb
+              mountPath: /cmdb
+          resources:
+            requests:
+              cpu: "10m"
+              memory: "32Mi"
+            limits:
+              cpu: "100m"
+              memory: "64Mi"
+          readinessProbe:
+            exec:
+              command: ["/bin/sh", "-c", "test -d /uploads/ITEAST"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: uploads
+          persistentVolumeClaim:
+            claimName: vmiq-uploads-pvc
+        - name: cmdb
+          persistentVolumeClaim:
+            claimName: vmiq-cmdb-pvc
